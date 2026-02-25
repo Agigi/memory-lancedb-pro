@@ -99,13 +99,17 @@ const MEMORY_TRIGGERS = [
   /my\s+\w+\s+is|is\s+my/i,
   /i (like|prefer|hate|love|want|need)/i,
   /always|never|important/i,
-  // Chinese triggers
-  /记住|记一下|别忘了|备注/,
-  /偏好|喜欢|讨厌|不喜欢|爱用|习惯/,
-  /决定|选择了|改用|换成|以后用/,
-  /我的\S+是|叫我|称呼/,
-  /总是|从不|一直|每次都/,
-  /重要|关键|注意|千万别/,
+  // Chinese triggers (繁體中文)
+  /記住|記一下|別忘了|備註/,
+  /偏好|喜歡|討厭|不喜歡|愛用|習慣/,
+  /決定|選擇了|改用|換成|以後用/,
+  /我的\S+是|叫我|稱呼/,
+  /總是|從不|一直|每次都/,
+  /重要|關鍵|注意|千萬別/,
+  // Discovery triggers (繁體中文)
+  /突然|發現|原來|居然|竟然|沒想到|悟到|領悟|領會|注意到|驚訝|訝然/,
+  // English discovery triggers
+  /suddenly|noticed|found out|realized|discovered|turned out|wow|holy|amazing/i,
 ];
 
 export function shouldCapture(text: string): boolean {
@@ -135,18 +139,22 @@ export function shouldCapture(text: string): boolean {
   return MEMORY_TRIGGERS.some((r) => r.test(text));
 }
 
-export function detectCategory(text: string): "preference" | "fact" | "decision" | "entity" | "other" {
+export function detectCategory(text: string): "preference" | "fact" | "decision" | "entity" | "discovery" | "other" {
   const lower = text.toLowerCase();
-  if (/prefer|radši|like|love|hate|want|偏好|喜欢|讨厌|不喜欢|爱用|习惯/i.test(lower)) {
+  // Discovery: 重要發現關鍵詞
+  if (/突然|注意|發現|原來|驚訝|居然|竟然|沒想到|悟到|領悟|領會|注意到/i.test(lower)) {
+    return "discovery";
+  }
+  if (/prefer|radši|like|love|hate|want|偏好|喜歡|討厭|不喜歡|愛用|習慣/i.test(lower)) {
     return "preference";
   }
-  if (/rozhodli|decided|will use|budeme|决定|选择了|改用|换成|以后用/i.test(lower)) {
+  if (/rozhodli|decided|will use|budeme|決定|選擇了|改用|換成|以後用/i.test(lower)) {
     return "decision";
   }
-  if (/\+\d{10,}|@[\w.-]+\.\w+|is called|jmenuje se|我的\S+是|叫我|称呼/i.test(lower)) {
+  if (/\+\d{10,}|@[\w.-]+\.\w+|is called|jmenuje se|我的\S+是|叫我|稱呼/i.test(lower)) {
     return "entity";
   }
-  if (/\b(is|are|has|have|je|má|jsou)\b|总是|从不|一直|每次都/i.test(lower)) {
+  if (/\b(is|are|has|have|je|má|jsou)\b|總是|從不|一直|每次都/i.test(lower)) {
     return "fact";
   }
   return "other";
