@@ -83,7 +83,9 @@ class EmbeddingCache {
 
 export interface EmbeddingConfig {
   provider: "openai-compatible";
-  apiKey: string;
+  /** Single API key string or an array of keys. When an array is provided,
+   *  one key is picked at random on each API request for load distribution. */
+  apiKey: string | string[];
   model: string;
   baseURL?: string;
   dimensions?: number;
@@ -147,7 +149,9 @@ export function getVectorDimensions(model: string, overrideDims?: number): numbe
 // ============================================================================
 
 export class Embedder {
-  private client: OpenAI;
+  /** Resolved list of API keys (always at least one entry). */
+  private readonly _apiKeys: string[];
+  private readonly _baseURL?: string;
   public readonly dimensions: number;
   private readonly _cache: EmbeddingCache;
 
@@ -157,21 +161,33 @@ export class Embedder {
   private readonly _normalized?: boolean;
 
   constructor(config: EmbeddingConfig) {
-    // Resolve environment variables in API key
-    const resolvedApiKey = resolveEnvVars(config.apiKey);
+    // Normalise apiKey to an array and resolve env vars in each entry
+    const rawKeys = Array.isArray(config.apiKey) ? config.apiKey : [config.apiKey];
+    this._apiKeys = rawKeys.map((k) => resolveEnvVars(k));
+    if (this._apiKeys.length === 0) {
+      throw new Error("embedding.apiKey must contain at least one key");
+    }
 
     this._model = config.model;
     this._taskQuery = config.taskQuery;
     this._taskPassage = config.taskPassage;
     this._normalized = config.normalized;
-
-    this.client = new OpenAI({
-      apiKey: resolvedApiKey,
-      ...(config.baseURL ? { baseURL: config.baseURL } : {}),
-    });
+    this._baseURL = config.baseURL;
 
     this.dimensions = getVectorDimensions(config.model, config.dimensions);
     this._cache = new EmbeddingCache(256, 30); // 256 entries, 30 min TTL
+  }
+
+  /**
+   * Pick a random API key from the pool and return a fresh OpenAI client.
+   * When only one key is configured the same key is always returned.
+   */
+  private _pickClient(): OpenAI {
+    const key = this._apiKeys[Math.floor(Math.random() * this._apiKeys.length)];
+    return new OpenAI({
+      apiKey: key,
+      ...(this._baseURL ? { baseURL: this._baseURL } : {}),
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -250,7 +266,8 @@ export class Embedder {
     if (cached) return cached;
 
     try {
-      const response = await this.client.embeddings.create(this.buildPayload(text, task) as any);
+      const client = this._pickClient();
+      const response = await client.embeddings.create(this.buildPayload(text, task) as any);
       const embedding = response.data[0]?.embedding as number[] | undefined;
       if (!embedding) {
         throw new Error("No embedding returned from provider");
@@ -288,7 +305,8 @@ export class Embedder {
     }
 
     try {
-      const response = await this.client.embeddings.create(
+      const client = this._pickClient();
+      const response = await client.embeddings.create(
         this.buildPayload(validTexts, task) as any
       );
 

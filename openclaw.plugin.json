@@ -17,7 +17,20 @@
             "const": "openai-compatible"
           },
           "apiKey": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Single API key string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "Array of API keys — one is picked at random per request for load distribution"
+              }
+            ]
           },
           "model": {
             "type": "string"
@@ -103,7 +116,20 @@
             "default": "cross-encoder"
           },
           "rerankApiKey": {
-            "type": "string",
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Single reranker API key"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "Array of reranker API keys — one is picked at random per request for load distribution"
+              }
+            ],
             "description": "API key for reranker service (enables cross-encoder reranking)"
           },
           "rerankModel": {
@@ -118,7 +144,11 @@
           },
           "rerankProvider": {
             "type": "string",
-            "enum": ["jina", "siliconflow", "pinecone"],
+            "enum": [
+              "jina",
+              "siliconflow",
+              "pinecone"
+            ],
             "default": "jina",
             "description": "Reranker provider format. Determines request/response shape and auth header."
           },
@@ -228,7 +258,7 @@
       "label": "API Key",
       "sensitive": true,
       "placeholder": "sk-proj-... or ${GEMINI_API_KEY} or 'ollama'",
-      "help": "API key for the embedding provider (or use ${OPENAI_API_KEY}; use a dummy value for keyless local endpoints)"
+      "help": "API key for the embedding provider. Accepts a single string or a JSON array of strings (e.g. [\"${KEY_1}\", \"${KEY_2}\"]) — when multiple keys are provided, one is selected at random per request for load distribution."
     },
     "embedding.model": {
       "label": "Embedding Model",

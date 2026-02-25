@@ -24,8 +24,8 @@ export interface RetrievalConfig {
   recencyWeight: number;
   /** Filter noise from results (default: true) */
   filterNoise: boolean;
-  /** Reranker API key (enables cross-encoder reranking) */
-  rerankApiKey?: string;
+  /** Reranker API key (or an array of keys — one is picked at random per request). */
+  rerankApiKey?: string | string[];
   /** Reranker model (default: jina-reranker-v2-base-multilingual) */
   rerankModel?: string;
   /** Reranker API endpoint (default: https://api.jina.ai/v1/rerank). */
@@ -100,6 +100,19 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+/**
+ * Pick a random API key from a string or string-array config value.
+ * Returns undefined when no key is configured.
+ */
+function pickRerankKey(key: string | string[] | undefined): string | undefined {
+  if (!key) return undefined;
+  if (Array.isArray(key)) {
+    if (key.length === 0) return undefined;
+    return key[Math.floor(Math.random() * key.length)];
+  }
+  return key;
+}
 
 function clampInt(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -214,7 +227,7 @@ export class MemoryRetriever {
     private store: MemoryStore,
     private embedder: Embedder,
     private config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG
-  ) {}
+  ) { }
 
   async retrieve(context: RetrievalContext): Promise<RetrievalResult[]> {
     const { query, limit, scopeFilter, category } = context;
@@ -424,15 +437,16 @@ export class MemoryRetriever {
     }
 
     // Try cross-encoder rerank via configured provider API
-    if (this.config.rerank === "cross-encoder" && this.config.rerankApiKey) {
+    const pickedRerankKey = pickRerankKey(this.config.rerankApiKey);
+    if (this.config.rerank === "cross-encoder" && pickedRerankKey) {
       try {
         const provider = this.config.rerankProvider || "jina";
         const model = this.config.rerankModel || "jina-reranker-v2-base-multilingual";
         const endpoint = this.config.rerankEndpoint || "https://api.jina.ai/v1/rerank";
         const documents = results.map(r => r.entry.text);
 
-        // Build provider-specific request
-        const { headers, body } = buildRerankRequest(provider, this.config.rerankApiKey, model, query, documents, results.length);
+        // Build provider-specific request (using the randomly selected key)
+        const { headers, body } = buildRerankRequest(provider, pickedRerankKey, model, query, documents, results.length);
 
         // Timeout: 5 seconds to prevent stalling retrieval pipeline
         const controller = new AbortController();

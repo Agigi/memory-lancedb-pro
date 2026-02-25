@@ -25,7 +25,8 @@ import { createMemoryCLI } from "./cli.js";
 interface PluginConfig {
   embedding: {
     provider: "openai-compatible";
-    apiKey: string;
+    /** Single API key string, or an array for random key rotation across requests. */
+    apiKey: string | string[];
     model?: string;
     baseURL?: string;
     dimensions?: number;
@@ -44,7 +45,8 @@ interface PluginConfig {
     minScore?: number;
     rerank?: "cross-encoder" | "lightweight" | "none";
     candidatePoolSize?: number;
-    rerankApiKey?: string;
+    /** Single reranker API key or array for random rotation per request. */
+    rerankApiKey?: string | string[];
     rerankModel?: string;
     rerankEndpoint?: string;
     rerankProvider?: "jina" | "siliconflow" | "pinecone";
@@ -185,7 +187,7 @@ async function readSessionMessages(filePath: string, messageCount: number): Prom
             }
           }
         }
-      } catch {}
+      } catch { }
     }
 
     if (messages.length === 0) return null;
@@ -210,7 +212,7 @@ async function readSessionContentWithResetFallback(sessionFilePath: string, mess
       const latestResetPath = join(dir, resetCandidates[resetCandidates.length - 1]);
       return await readSessionMessages(latestResetPath, messageCount);
     }
-  } catch {}
+  } catch { }
 
   return primary;
 }
@@ -249,7 +251,7 @@ async function findPreviousSessionFile(sessionsDir: string, currentSessionFile?:
         .sort().reverse();
       if (nonReset.length > 0) return join(sessionsDir, nonReset[0]);
     }
-  } catch {}
+  } catch { }
 }
 
 // ============================================================================
@@ -276,7 +278,7 @@ const memoryLanceDBProPlugin = {
     const store = new MemoryStore({ dbPath: resolvedDbPath, vectorDim });
     const embedder = createEmbedder({
       provider: "openai-compatible",
-      apiKey: resolveEnvVars(config.embedding.apiKey),
+      apiKey: config.embedding.apiKey, // string | string[] — Embedder resolves env vars internally
       model: config.embedding.model || "text-embedding-3-small",
       baseURL: config.embedding.baseURL,
       dimensions: config.embedding.dimensions,
@@ -591,7 +593,7 @@ const memoryLanceDBProPlugin = {
         if (files.length > 7) {
           const { unlink } = await import("node:fs/promises");
           for (const old of files.slice(0, files.length - 7)) {
-            await unlink(join(backupDir, old)).catch(() => {});
+            await unlink(join(backupDir, old)).catch(() => { });
           }
         }
 
@@ -648,51 +650,81 @@ const memoryLanceDBProPlugin = {
 };
 
 function parsePluginConfig(value: unknown): PluginConfig {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("memory-lancedb-pro config required");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("memory-lancedb-pro config required");
+  }
+  const cfg = value as Record<string, unknown>;
+
+  const embedding = cfg.embedding as Record<string, unknown> | undefined;
+  if (!embedding) {
+    throw new Error("embedding config is required");
+  }
+
+  // apiKey may be a single string or an array of strings
+  let apiKey: string | string[];
+  if (Array.isArray(embedding.apiKey)) {
+    // Validate all elements are strings
+    const arr = embedding.apiKey as unknown[];
+    if (arr.length === 0) {
+      throw new Error("embedding.apiKey array must contain at least one key");
     }
-    const cfg = value as Record<string, unknown>;
-
-    const embedding = cfg.embedding as Record<string, unknown> | undefined;
-    if (!embedding) {
-      throw new Error("embedding config is required");
+    if (!arr.every((k) => typeof k === "string")) {
+      throw new Error("embedding.apiKey array must contain only strings");
     }
+    apiKey = arr as string[];
+  } else if (typeof embedding.apiKey === "string") {
+    apiKey = embedding.apiKey;
+  } else {
+    apiKey = process.env.OPENAI_API_KEY || "";
+  }
 
-    const apiKey = typeof embedding.apiKey === "string"
-      ? embedding.apiKey
-      : process.env.OPENAI_API_KEY || "";
+  const hasKey = Array.isArray(apiKey) ? apiKey.length > 0 && apiKey.some(k => k.length > 0) : apiKey.length > 0;
+  if (!hasKey) {
+    throw new Error("embedding.apiKey is required (set directly or via OPENAI_API_KEY env var)");
+  }
 
-    if (!apiKey) {
-      throw new Error("embedding.apiKey is required (set directly or via OPENAI_API_KEY env var)");
-    }
-
-    return {
-      embedding: {
-        provider: "openai-compatible",
-        apiKey,
-        model: typeof embedding.model === "string" ? embedding.model : "text-embedding-3-small",
-        baseURL: typeof embedding.baseURL === "string" ? resolveEnvVars(embedding.baseURL) : undefined,
-        dimensions: typeof embedding.dimensions === "number" ? embedding.dimensions : undefined,
-        taskQuery: typeof embedding.taskQuery === "string" ? embedding.taskQuery : undefined,
-        taskPassage: typeof embedding.taskPassage === "string" ? embedding.taskPassage : undefined,
-        normalized: typeof embedding.normalized === "boolean" ? embedding.normalized : undefined,
-      },
-      dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : undefined,
-      autoCapture: cfg.autoCapture !== false,
-      autoRecall: cfg.autoRecall !== false,
-      captureAssistant: cfg.captureAssistant === true,
-      retrieval: typeof cfg.retrieval === "object" && cfg.retrieval !== null ? cfg.retrieval as any : undefined,
-      scopes: typeof cfg.scopes === "object" && cfg.scopes !== null ? cfg.scopes as any : undefined,
-      enableManagementTools: cfg.enableManagementTools === true,
-      sessionMemory: typeof cfg.sessionMemory === "object" && cfg.sessionMemory !== null
-        ? {
-            enabled: (cfg.sessionMemory as Record<string, unknown>).enabled !== false,
-            messageCount: typeof (cfg.sessionMemory as Record<string, unknown>).messageCount === "number"
-              ? (cfg.sessionMemory as Record<string, unknown>).messageCount as number
-              : undefined,
+  return {
+    embedding: {
+      provider: "openai-compatible",
+      apiKey,
+      model: typeof embedding.model === "string" ? embedding.model : "text-embedding-3-small",
+      baseURL: typeof embedding.baseURL === "string" ? resolveEnvVars(embedding.baseURL) : undefined,
+      dimensions: typeof embedding.dimensions === "number" ? embedding.dimensions : undefined,
+      taskQuery: typeof embedding.taskQuery === "string" ? embedding.taskQuery : undefined,
+      taskPassage: typeof embedding.taskPassage === "string" ? embedding.taskPassage : undefined,
+      normalized: typeof embedding.normalized === "boolean" ? embedding.normalized : undefined,
+    },
+    dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : undefined,
+    autoCapture: cfg.autoCapture !== false,
+    autoRecall: cfg.autoRecall !== false,
+    captureAssistant: cfg.captureAssistant === true,
+    retrieval: typeof cfg.retrieval === "object" && cfg.retrieval !== null
+      ? (() => {
+        const r = cfg.retrieval as Record<string, unknown>;
+        // Validate rerankApiKey: must be string or string[]
+        if (r.rerankApiKey !== undefined) {
+          if (Array.isArray(r.rerankApiKey)) {
+            if (!r.rerankApiKey.every((k: unknown) => typeof k === "string")) {
+              throw new Error("retrieval.rerankApiKey array must contain only strings");
+            }
+          } else if (typeof r.rerankApiKey !== "string") {
+            throw new Error("retrieval.rerankApiKey must be a string or array of strings");
           }
-        : undefined,
-    };
+        }
+        return r as any;
+      })()
+      : undefined,
+    scopes: typeof cfg.scopes === "object" && cfg.scopes !== null ? cfg.scopes as any : undefined,
+    enableManagementTools: cfg.enableManagementTools === true,
+    sessionMemory: typeof cfg.sessionMemory === "object" && cfg.sessionMemory !== null
+      ? {
+        enabled: (cfg.sessionMemory as Record<string, unknown>).enabled !== false,
+        messageCount: typeof (cfg.sessionMemory as Record<string, unknown>).messageCount === "number"
+          ? (cfg.sessionMemory as Record<string, unknown>).messageCount as number
+          : undefined,
+      }
+      : undefined,
+  };
 }
 
 export default memoryLanceDBProPlugin;
